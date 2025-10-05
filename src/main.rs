@@ -13,23 +13,25 @@ use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,
+    ecc::Ecc,
     gpio::{Level, Output, OutputConfig},
-    rng::Rng,
+    peripherals,
+    rng::{Rng, Trng},
+    sha::Sha,
     timer::timg::TimerGroup,
 };
 use esp_hal_embassy::main;
 use esp_wifi::{EspWifiController, wifi::WifiDevice};
+use esp32_ecdsa::CryptoContext;
 use heapless::Vec;
 use p256::{
     PublicKey, SecretKey,
     pkcs8::{DecodePrivateKey, DecodePublicKey},
 };
 
-use crypto::CryptoContext;
 use transport::connection_task;
 use wifi::wifi_connection;
 
-mod crypto;
 mod transport;
 mod wifi;
 
@@ -97,7 +99,6 @@ async fn main(spawner: Spawner) {
 
     let stack = mk_static!(Stack<'_>, stack);
     let runner = mk_static!(Runner<'_, WifiDevice<'_>>, runner);
-    let rng = mk_static!(Rng, rng);
 
     let switch_pin = mk_static!(
         Output<'_>,
@@ -105,9 +106,9 @@ async fn main(spawner: Spawner) {
     );
 
     let crypto = CryptoContext {
-        sha: peripherals.SHA,
-        ecc: peripherals.ECC,
-        rng_driver: rng,
+        sha: Sha::new(peripherals.SHA),
+        ecc: Ecc::new(peripherals.ECC),
+        trng: Trng::new(unsafe { peripherals::RNG::steal() }, peripherals.ADC1), // should be safe as we don't use RNG after this
         secret_key: SecretKey::from_pkcs8_der(PRIVATE_KEY).expect("Failed to decode secret key"),
         server_public_key: PublicKey::from_public_key_der(SERVER_PUBLIC_KEY)
             .expect("Failed to decode server public key"),
