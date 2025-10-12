@@ -5,8 +5,10 @@ extern crate alloc;
 
 use alloc::string::ToString;
 use anyhow::Error;
+use core::{net::SocketAddrV4, str::FromStr};
 use defmt::{error, println};
 use defmt_rtt as _;
+use devicectrl_common::protocol::simple::esp::{TransportChannels, transport_task};
 use embassy_executor::Spawner;
 use embassy_net::{Runner, Stack, StackResources, StaticConfigV4};
 use embassy_time::{Duration, Timer};
@@ -29,10 +31,9 @@ use p256::{
     pkcs8::{DecodePrivateKey, DecodePublicKey},
 };
 
-use transport::connection_task;
-use wifi::wifi_connection;
+use crate::{switch::app_task, wifi::wifi_connection};
 
-mod transport;
+mod switch;
 mod wifi;
 
 const DEVICE_ID: &str = env!("DEVICE_ID");
@@ -114,11 +115,25 @@ async fn main(spawner: Spawner) {
             .expect("Failed to decode server public key"),
     };
 
+    let transport = mk_static!(TransportChannels, TransportChannels::new());
+
+    let device_id =
+        devicectrl_common::DeviceId::from(DEVICE_ID).expect("Failed to create device id");
+
+    let server_addr = SocketAddrV4::from_str(env!("SERVER_ADDR")).expect("Invalid server address");
+
     spawner.spawn(wifi_connection(controller)).unwrap();
     spawner.spawn(net_task(runner)).unwrap();
     spawner
-        .spawn(connection_task(stack, switch_pin, crypto))
+        .spawn(transport_task(
+            stack,
+            server_addr,
+            transport,
+            device_id,
+            crypto,
+        ))
         .unwrap();
+    spawner.spawn(app_task(switch_pin, transport)).unwrap();
 }
 
 #[embassy_executor::task]
