@@ -1,14 +1,14 @@
 use defmt::{info, warn};
 use devicectrl_common::{
     DeviceId, DeviceState,
-    device_types::switch::SwitchState,
+    device_types::switch::{SwitchPower, SwitchState},
     protocol::simple::{
         DeviceBoundSimpleMessage, ServerBoundSimpleMessage,
         esp::{TransportChannels, TransportEvent},
     },
     updates::AttributeUpdate,
 };
-use esp_hal::gpio::Output;
+use esp_hal::gpio::{Level, Output};
 
 use crate::log_error;
 
@@ -30,7 +30,10 @@ pub async fn app_task(
                             device_id: DeviceId::from(crate::DEVICE_ID).unwrap(),
                             reachable: true,
                             new_state: DeviceState::Switch(SwitchState {
-                                power: switch_pin.is_set_high(),
+                                power: match switch_pin.output_level() {
+                                    Level::High => SwitchPower::On,
+                                    Level::Low => SwitchPower::Off,
+                                },
                             }),
                         },
                     ))
@@ -48,18 +51,23 @@ pub async fn app_task(
                     continue;
                 }
 
-                let AttributeUpdate::Power(new_state) = update.update else {
+                let AttributeUpdate::Power(new_power) = update.update else {
                     warn!("Received unsupported attribute update, ignoring");
                     continue;
                 };
 
-                info!("Setting switch power to [{}]", new_state.power);
+                info!(
+                    "Setting switch power to [{}]",
+                    match new_power {
+                        SwitchPower::On => "On",
+                        SwitchPower::Off => "Off",
+                    }
+                );
 
-                if new_state.power {
-                    switch_pin.set_high();
-                } else {
-                    switch_pin.set_low();
-                }
+                switch_pin.set_level(match new_power {
+                    SwitchPower::On => Level::High,
+                    SwitchPower::Off => Level::Low,
+                });
 
                 transport
                     .outgoing
@@ -67,9 +75,7 @@ pub async fn app_task(
                         devicectrl_common::UpdateNotification {
                             device_id: DeviceId::from(crate::DEVICE_ID).unwrap(),
                             reachable: true,
-                            new_state: DeviceState::Switch(SwitchState {
-                                power: new_state.power,
-                            }),
+                            new_state: DeviceState::Switch(SwitchState { power: new_power }),
                         },
                     ))
                     .await;
@@ -90,7 +96,10 @@ pub async fn app_task(
                             device_id,
                             reachable: true,
                             new_state: DeviceState::Switch(SwitchState {
-                                power: switch_pin.is_set_high(),
+                                power: match switch_pin.output_level() {
+                                    Level::High => SwitchPower::On,
+                                    Level::Low => SwitchPower::Off,
+                                },
                             }),
                         },
                     ))
